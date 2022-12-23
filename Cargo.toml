@@ -20,3 +20,4 @@ secrecy = { version = "0.8", features = ["serde"] }
 serde_json = { version = "1.0" }
 retainer = "0.3"
 futures = "0.3.25"
+config = "0.13.3"

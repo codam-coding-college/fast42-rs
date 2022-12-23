@@ -5,6 +5,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+use futures::future::{self, try_join_all};
 use reqwest::{Body, Client, Method, Request, Response};
 use retainer::entry::CacheReadGuard;
 use retainer::Cache;
@@ -14,7 +15,6 @@ use tower::buffer::Buffer;
 use tower::limit::RateLimit;
 use tower::ServiceExt;
 use tower::{BoxError, Service, ServiceBuilder};
-use futures::future::{self, try_join_all};
 
 type ClientId = String;
 
@@ -47,10 +47,7 @@ struct HttpOptions {
 
 impl HttpOptions {
     fn new(key: String, value: String) -> Self {
-        HttpOptions {
-            key,
-            value
-        }
+        HttpOptions { key, value }
     }
 }
 
@@ -98,28 +95,157 @@ impl Fast42 {
         Ok(res)
     }
 
-    pub async fn get_all_pages<D>(&'static self, endpoint: String, options: D) -> Result<Vec<Pin<Box<dyn Future<Output = Result<Response, Box<dyn Error + Send + Sync + '_>>>>>>, BoxError>
+    pub async fn get_all_future_pages<D>(
+        &'static self,
+        endpoint: String,
+        options: D,
+    ) -> Result<
+        Vec<Pin<Box<dyn Future<Output = Result<Response, Box<dyn Error + Send + Sync + '_>>>>>>,
+        BoxError,
+    >
     where
-        D: IntoIterator<Item = HttpOptions> + Clone
+        D: IntoIterator<Item = HttpOptions> + Clone,
     {
         let mut page: u32 = 1;
-        let page_options = vec![HttpOptions::new("page[size]".to_string(), "100".to_string()), HttpOptions::new("page[number]".to_string(), page.to_string())];
+        let page_options = vec![
+            HttpOptions::new("page[size]".to_string(), "100".to_string()),
+            HttpOptions::new("page[number]".to_string(), page.to_string()),
+        ];
         let mut param_options = options.clone().into_iter();
-        let all_options = page_options.into_iter().chain(&mut param_options).collect::<Vec<HttpOptions>>().into_iter();
+        let all_options = page_options
+            .into_iter()
+            .chain(&mut param_options)
+            .collect::<Vec<HttpOptions>>()
+            .into_iter();
         let http_options = self.format_options(all_options);
         let endpoint = format!("{}{}", endpoint, http_options);
         let res = self.make_api_req(Method::GET, endpoint.clone()).await?;
         let headers = res.headers();
-        let total_pages = headers.get("x-total").unwrap().to_str()?.parse::<u32>()?;
-        let all_pages  = (page..=total_pages).map(|p| -> Pin<Box<dyn Future<Output = Result<Response, Box<dyn Error + Send + Sync + 'static>>>>> {
-            let page_options = vec![HttpOptions::new("page[size]".to_string(), "100".to_string()), HttpOptions::new("page[number]".to_string(), p.to_string())];
+        let total_pages = headers.get("x-total").unwrap().to_str()?.parse::<u32>()? / 100;
+        let all_pages = (page..=total_pages)
+            .map(
+                |p| -> Pin<
+                    Box<
+                        dyn Future<
+                            Output = Result<Response, Box<dyn Error + Send + Sync + 'static>>,
+                        >,
+                    >,
+                > {
+                    let page_options = vec![
+                        HttpOptions::new("page[size]".to_string(), "100".to_string()),
+                        HttpOptions::new("page[number]".to_string(), p.to_string()),
+                    ];
+                    let mut param_options = options.clone().into_iter();
+                    let all_options = page_options
+                        .into_iter()
+                        .chain(&mut param_options)
+                        .collect::<Vec<HttpOptions>>()
+                        .into_iter();
+                    let http_options = self.format_options(all_options);
+                    let endpoint = format!("{}{}", endpoint, http_options);
+                    let res = self.make_api_req(Method::GET, endpoint);
+                    Box::pin(res)
+                },
+            )
+            .collect::<Vec<_>>();
+        Ok(all_pages)
+    }
+
+    pub async fn get_all_async_pages<D>(
+        &self,
+        endpoint: String,
+        options: D,
+    ) -> Result<Vec<Response>, BoxError>
+    where
+        D: IntoIterator<Item = HttpOptions> + Clone,
+    {
+        let mut page: u32 = 1;
+        let page_options = vec![
+            HttpOptions::new("page[size]".to_string(), "100".to_string()),
+            HttpOptions::new("page[number]".to_string(), page.to_string()),
+        ];
+        let mut param_options = options.clone().into_iter();
+        let all_options = page_options
+            .into_iter()
+            .chain(&mut param_options)
+            .collect::<Vec<HttpOptions>>()
+            .into_iter();
+        let http_options = self.format_options(all_options);
+        let endpoint = format!("{}{}", endpoint, http_options);
+        let res = self.make_api_req(Method::GET, endpoint.clone()).await?;
+        let headers = res.headers();
+        let total_pages = headers.get("x-total").unwrap().to_str()?.parse::<u32>()? / 100;
+        let all_pages = (page..=total_pages)
+            .map(
+                |p| -> Pin<
+                    Box<
+                        dyn Future<
+                            Output = Result<Response, Box<dyn Error + Send + Sync + 'static>>,
+                        >,
+                    >,
+                > {
+                    let page_options = vec![
+                        HttpOptions::new("page[size]".to_string(), "100".to_string()),
+                        HttpOptions::new("page[number]".to_string(), p.to_string()),
+                    ];
+                    let mut param_options = options.clone().into_iter();
+                    let all_options = page_options
+                        .into_iter()
+                        .chain(&mut param_options)
+                        .collect::<Vec<HttpOptions>>()
+                        .into_iter();
+                    let http_options = self.format_options(all_options);
+                    let endpoint = format!("{}{}", endpoint, http_options);
+                    let res = self.make_api_req(Method::GET, endpoint);
+                    Box::pin(res)
+                },
+            )
+            .collect::<Vec<_>>();
+        let pages = try_join_all(all_pages).await;
+        pages
+    }
+
+    pub async fn get_all_sync_pages<D>(
+        &self,
+        endpoint: String,
+        options: D,
+    ) -> Result<Vec<Result<Response, Box<dyn Error + Send + Sync>>>, BoxError>
+    where
+        D: IntoIterator<Item = HttpOptions> + Clone,
+    {
+        let mut page: u32 = 1;
+        let page_options = vec![
+            HttpOptions::new("page[size]".to_string(), "100".to_string()),
+            HttpOptions::new("page[number]".to_string(), page.to_string()),
+        ];
+        let mut param_options = options.clone().into_iter();
+        let all_options = page_options
+            .into_iter()
+            .chain(&mut param_options)
+            .collect::<Vec<HttpOptions>>()
+            .into_iter();
+        let http_options = self.format_options(all_options);
+        let endpoint = format!("{}{}", endpoint, http_options);
+        let res = self.make_api_req(Method::GET, endpoint.clone()).await?;
+        let headers = res.headers();
+        let total_pages = headers.get("x-total").unwrap().to_str()?.parse::<u32>()? / 100;
+        let mut all_pages = vec![];
+        for p in page..=total_pages {
+            let page_options = vec![
+                HttpOptions::new("page[size]".to_string(), "100".to_string()),
+                HttpOptions::new("page[number]".to_string(), p.to_string()),
+            ];
             let mut param_options = options.clone().into_iter();
-            let all_options = page_options.into_iter().chain(&mut param_options).collect::<Vec<HttpOptions>>().into_iter();
+            let all_options = page_options
+                .into_iter()
+                .chain(&mut param_options)
+                .collect::<Vec<HttpOptions>>()
+                .into_iter();
             let http_options = self.format_options(all_options);
             let endpoint = format!("{}{}", endpoint, http_options);
-            let res = self.make_api_req(Method::GET, endpoint);
-            Box::pin(res)
-        }).collect::<Vec<Pin<Box<dyn Future<Output = Result<Response, Box<dyn Error + Send + Sync + 'static>>>>>>>();
+            let res = self.make_api_req(Method::GET, endpoint).await;
+            all_pages.push(res);
+        }
         Ok(all_pages)
     }
 
@@ -158,6 +284,7 @@ impl Fast42 {
                     .await?
                     .call(req)
                     .await?;
+                dbg!(&endpoint);
                 Ok(res)
             }
             Err(e) => Err(e),
@@ -244,18 +371,27 @@ impl Drop for Fast42 {
 
 #[cfg(test)]
 mod tests {
+    use crate::configuration::get_configuration_settings;
+
     use super::*;
 
     #[tokio::test]
     async fn it_works() {
-        // let fast42 = Fast42::new(
-            // "UID",
-            //"SECRET",
-        //     14000,
-        //     8,
-        // );
+        let credentials = get_configuration_settings().unwrap().fortytwo;
+        let fast42 = Fast42::new(
+            &credentials.uid,
+            &credentials.secret.expose_secret(),
+            14000,
+            8,
+        );
         let result = fast42
-            .get("/users".to_string(), [HttpOptions::new("filter[primary_campus_id]".to_string(), "14".to_string())])
+            .get(
+                "/users".to_string(),
+                [HttpOptions::new(
+                    "filter[primary_campus_id]".to_string(),
+                    "14".to_string(),
+                )],
+            )
             .await;
         match result {
             Ok(r) => {
@@ -271,15 +407,88 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_all_pages() {
+    async fn get_all_async_pages() {
+        let credentials = get_configuration_settings().unwrap().fortytwo;
+        let fast42 = Fast42::new(
+            &credentials.uid,
+            &credentials.secret.expose_secret(),
+            14000,
+            8,
+        );
         let result = fast42
-            .get_all_pages("/users".to_string(), vec![HttpOptions::new("filter[primary_campus_id]".to_string(), "14".to_string())])
+            .get_all_async_pages(
+                "/users".to_string(),
+                vec![HttpOptions::new(
+                    "filter[primary_campus_id]".to_string(),
+                    "14".to_string(),
+                )],
+            )
             .await;
         match result {
-            Ok(r) => {
-                let pages: Vec<_> = try_join_all(r).await.unwrap();
-                let last_index = pages.len() - 1;
-                let last_page: String = pages.get(last_index).unwrap().text().await.unwrap();
+            Ok(mut pages) => {
+                let last_index = pages.len();
+                let last_page = pages.remove(last_index - 1).text().await.unwrap();
+                print!("{:?}", &last_page);
+                assert_ne!(last_page, "");
+            }
+            Err(e) => {
+                println!("{}", e);
+                assert!(false);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn get_all_sync_pages() {
+        let credentials = get_configuration_settings().unwrap().fortytwo;
+        let fast42 = Fast42::new(
+            &credentials.uid,
+            &credentials.secret.expose_secret(),
+            14000,
+            8,
+        );
+        let result = fast42
+            .get_all_sync_pages(
+                "/users".to_string(),
+                vec![HttpOptions::new(
+                    "filter[primary_campus_id]".to_string(),
+                    "14".to_string(),
+                )],
+            )
+            .await;
+        match result {
+            Ok(mut pages) => {
+                let last_index = pages.len();
+                let last_page = pages.remove(last_index - 1).unwrap().text().await.unwrap();
+                print!("{:?}", &last_page);
+                assert_ne!(last_page, "");
+            }
+            Err(e) => {
+                println!("{}", e);
+                assert!(false);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn get_all_async_pages_many() {
+        let credentials = get_configuration_settings().unwrap().fortytwo;
+        let fast42 = Fast42::new(
+            &credentials.uid,
+            &credentials.secret.expose_secret(),
+            14000,
+            8,
+        );
+        let result = fast42
+            .get_all_async_pages(
+                "/users".to_string(),
+                vec![],
+            )
+            .await;
+        match result {
+            Ok(mut pages) => {
+                let last_index = pages.len();
+                let last_page = pages.remove(last_index - 1).text().await.unwrap();
                 print!("{:?}", &last_page);
                 assert_ne!(last_page, "");
             }
