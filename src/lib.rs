@@ -1,3 +1,12 @@
+//! A super fast 42 API connector
+//! 
+//! Makes it easy to fetch data from the 42 API.
+//! Main features:
+//! - Rate Limited
+//! - Async (easily fetch all pages of an endpoint!)
+//! - Fast 🚀
+
+
 #![forbid(unsafe_code)]
 // #![ warn
 // (
@@ -23,7 +32,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{instrument, info, trace};
+use tracing::{instrument, info, trace, error};
 
 use futures::future::try_join_all;
 use reqwest::{Body, Client, Method, Request, Response};
@@ -39,14 +48,20 @@ use tower::{BoxError, Service, ServiceBuilder};
 #[cfg(test)]
 use mockito;
 
+/// Type alias for the 42 Client Id.
 type ClientId = String;
 
+/// Struct holding the 42 API credentials.
+/// Note that the client_secret is a `secrecy` SecretString.
+/// This is to prevent it from showing up in logs and debug output.
 #[derive(Debug)]
 struct ApiCredentials {
     client_id: ClientId,
     client_secret: SecretString,
 }
 
+/// Struct holding the response from the token endpoint.
+/// Not all fields are used.
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct AccessToken {
@@ -57,6 +72,19 @@ struct AccessToken {
     created_at: u64,
 }
 
+/// Struct holding everything needed to perform requests. Can only be instantiated using the `new()` method.
+/// 
+/// # Example
+/// ```
+/// # use fast42::Fast42;
+/// use secrecy::SecretString;
+///
+/// # #[tokio::main]
+/// # async fn main() {
+/// let secret = SecretString::new("SECRET".to_owned());
+/// let fast42 = Fast42::new("UID", &secret, 1400, 8);
+/// # }
+/// ```
 #[non_exhaustive]
 pub struct Fast42 {
     credentials: ApiCredentials,
@@ -94,6 +122,18 @@ where
         .collect::<String>()
 }
 
+
+/// Key/value pair holder to represent HTTP options. Best constructed using the `new()` method.
+/// 
+/// ## Example
+/// ```
+/// # use fast42::HttpOption;
+/// #
+/// let options = [
+///     HttpOption::new("campus_id", "14"),
+///     HttpOption::new("cursus_id", "21"),
+/// ];
+/// ```
 #[derive(Clone, Debug)]
 pub struct HttpOption {
     key: String,
@@ -114,6 +154,19 @@ impl HttpOption {
 
 impl Fast42 {
 
+    /// Constructor of the Fast42 struct.
+    /// 
+    /// # Example
+    /// ```
+    /// # use fast42::Fast42;
+    /// use secrecy::SecretString;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let secret = SecretString::new("SECRET".to_owned());
+    /// let fast42 = Fast42::new("UID", &secret, 1400, 8);
+    /// # }
+    /// ```
     #[instrument]
     pub fn new(
         key: &str,
@@ -157,7 +210,6 @@ impl Fast42 {
         }
     }
 
-    #[instrument]
     pub async fn get<D>(&self, endpoint: String, options: D) -> Result<Response, BoxError>
     where
         D: IntoIterator<Item = HttpOption> + std::fmt::Debug,
@@ -165,11 +217,19 @@ impl Fast42 {
         let http_options = format_options(options);
         let endpoint = format!("{}{}", endpoint, http_options);
         info!("Getting {}", endpoint);
-        let res = self.make_api_req(Method::GET, endpoint.clone(), "").await?;
-        Ok(res)
+        let res = self.make_api_req(Method::GET, endpoint.clone(), "").await;
+        match res {
+            Ok(res) => {
+                trace!("request succeeded");
+                Ok(res)
+            },
+            Err(e) => {
+                error!("failed making request: {}", e);
+                Err(e)
+            },
+        }
     }
 
-    #[instrument]
     pub async fn get_all_pages<D>(
         &self,
         endpoint: String,
@@ -237,6 +297,7 @@ impl Fast42 {
         let access_token = self.get_access_token().await;
         match access_token {
             Ok(at) => {
+                trace!("got access_token, making request...");
                 let token = at.access_token.expose_secret();
                 let req = client
                     .request(
@@ -256,7 +317,10 @@ impl Fast42 {
                     .await?;
                 Ok(res)
             }
-            Err(e) => Err(e),
+            Err(e) => {
+                error!("failed to get access token");
+                Err(e)
+            },
         }
     }
 
