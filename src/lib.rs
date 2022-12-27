@@ -1,9 +1,29 @@
+#![forbid(unsafe_code)]
+// #![ warn
+// (
+//    anonymous_parameters          ,
+//    missing_copy_implementations  ,
+//    missing_debug_implementations ,
+//    missing_docs                  ,
+//    nonstandard_style             ,
+//    rust_2018_idioms              ,
+//    single_use_lifetimes          ,
+//    trivial_casts                 ,
+//    trivial_numeric_casts         ,
+//    unreachable_pub               ,
+//    unused_extern_crates          ,
+//    unused_qualifications         ,
+//    variant_size_differences      ,
+// )]
+
 use serde::Deserialize;
 use std::error::Error;
+use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
+use tracing::{instrument, info, trace};
 
 use futures::future::try_join_all;
 use reqwest::{Body, Client, Method, Request, Response};
@@ -21,6 +41,7 @@ use mockito;
 
 type ClientId = String;
 
+#[derive(Debug)]
 struct ApiCredentials {
     client_id: ClientId,
     client_secret: SecretString,
@@ -46,9 +67,19 @@ pub struct Fast42 {
     version: String,
 }
 
+impl fmt::Debug for Fast42 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Fast42")
+            .field("credentials", &self.credentials)
+            .field("root_url", &self.root_url)
+            .field("version", &self.version)
+            .finish()
+    }
+}
+
 fn format_options<D>(options: D) -> String
 where
-    D: IntoIterator<Item = HttpOptions>,
+    D: IntoIterator<Item = HttpOption>,
 {
     options
         .into_iter()
@@ -63,18 +94,18 @@ where
         .collect::<String>()
 }
 
-#[derive(Clone)]
-pub struct HttpOptions {
+#[derive(Clone, Debug)]
+pub struct HttpOption {
     key: String,
     value: String,
 }
 
-impl HttpOptions {
+impl HttpOption {
     pub fn new<T>(key: T, value: T) -> Self
     where
         T: Into<String>,
     {
-        HttpOptions {
+        HttpOption {
             key: key.into(),
             value: value.into(),
         }
@@ -82,12 +113,15 @@ impl HttpOptions {
 }
 
 impl Fast42 {
+
+    #[instrument]
     pub fn new(
         key: &str,
-        secret: &str,
+        secret: &SecretString,
         ratelimit_per_hour: u64,
         ratelimit_per_second: u64,
     ) -> Fast42 {
+        trace!("Initializing struct Fast42");
         #[cfg(not(test))]
         let root_url: &str = "https://api.intra.42.fr";
 
@@ -113,7 +147,7 @@ impl Fast42 {
         Fast42 {
             credentials: ApiCredentials {
                 client_id: key.into(),
-                client_secret: SecretString::new(secret.into()),
+                client_secret: secret.to_owned(),
             },
             cache,
             service,
@@ -123,40 +157,45 @@ impl Fast42 {
         }
     }
 
+    #[instrument]
     pub async fn get<D>(&self, endpoint: String, options: D) -> Result<Response, BoxError>
     where
-        D: IntoIterator<Item = HttpOptions>,
+        D: IntoIterator<Item = HttpOption> + std::fmt::Debug,
     {
         let http_options = format_options(options);
         let endpoint = format!("{}{}", endpoint, http_options);
+        info!("Getting {}", endpoint);
         let res = self.make_api_req(Method::GET, endpoint.clone(), "").await?;
         Ok(res)
     }
 
-    pub async fn get_all_async_pages<D>(
+    #[instrument]
+    pub async fn get_all_pages<D>(
         &self,
         endpoint: String,
         options: D,
     ) -> Result<Vec<Response>, BoxError>
     where
-        D: IntoIterator<Item = HttpOptions> + Clone,
+        D: IntoIterator<Item = HttpOption> + Clone + std::fmt::Debug,
     {
         let page: u32 = 1;
         let page_options = vec![
-            HttpOptions::new("page[size]".to_string(), "100".to_string()),
-            HttpOptions::new("page[number]".to_string(), page.to_string()),
+            HttpOption::new("page[size]".to_string(), "100".to_string()),
+            HttpOption::new("page[number]".to_string(), page.to_string()),
         ];
         let mut param_options = options.clone().into_iter();
         let all_options = page_options
             .into_iter()
             .chain(&mut param_options)
-            .collect::<Vec<HttpOptions>>()
+            .collect::<Vec<HttpOption>>()
             .into_iter();
         let http_options = format_options(all_options);
         let endpoint = format!("{}{}", endpoint, http_options);
+        trace!("GET page {}", page);
         let res = self.make_api_req(Method::GET, endpoint.clone(), "").await?;
         let headers = res.headers();
         let total_pages = headers.get("x-total").unwrap().to_str()?.parse::<u32>()? / 100;
+        info!("Getting {} pages in total for {}", total_pages, endpoint);
         let all_pages = (page..=total_pages)
             .map(
                 |p| -> Pin<
@@ -167,17 +206,18 @@ impl Fast42 {
                     >,
                 > {
                     let page_options = vec![
-                        HttpOptions::new("page[size]".to_string(), "100".to_string()),
-                        HttpOptions::new("page[number]".to_string(), p.to_string()),
+                        HttpOption::new("page[size]".to_string(), "100".to_string()),
+                        HttpOption::new("page[number]".to_string(), p.to_string()),
                     ];
                     let mut param_options = options.clone().into_iter();
                     let all_options = page_options
                         .into_iter()
                         .chain(&mut param_options)
-                        .collect::<Vec<HttpOptions>>()
+                        .collect::<Vec<HttpOption>>()
                         .into_iter();
                     let http_options = format_options(all_options);
                     let endpoint = format!("{}{}", endpoint, http_options);
+                    trace!("GET page {}", p);
                     let res = self.make_api_req(Method::GET, endpoint, "");
                     Box::pin(res)
                 },
@@ -245,7 +285,7 @@ impl Fast42 {
             .await;
     }
 
-    async fn get_access_token(&self) -> Result<CacheReadGuard<AccessToken>, BoxError> {
+    async fn get_access_token(&self) -> Result<CacheReadGuard<'_, AccessToken>, BoxError> {
         let token = self.cache.get(&self.credentials.client_id).await;
         match token {
             Some(t) => Ok(t),
@@ -275,7 +315,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_new() {
-        let fast42 = Fast42::new("UID", "SECRET", 1400, 8);
+        let secret = SecretString::new("SECRET".to_owned());
+        let fast42 = Fast42::new("UID", &secret, 1400, 8);
         assert_eq!(fast42.credentials.client_id, "UID");
         assert_eq!(fast42.credentials.client_secret.expose_secret(), "SECRET");
         assert!(!fast42.root_url.is_empty());
@@ -283,7 +324,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_access_token_ok() {
-        let fast42 = Fast42::new("UID", "SECRET", 1400, 8);
+        let secret = SecretString::new("SECRET".to_owned());
+        let fast42 = Fast42::new("UID", &secret, 1400, 8);
         let _m = mock("POST", "/oauth/token")
             .with_status(200)
             .with_header("content-type", "application/json; charset=utf-8")
@@ -301,7 +343,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_store_access_token_ok() {
-        let fast42 = Fast42::new("UID", "SECRET", 1400, 8);
+        let secret = SecretString::new("SECRET".to_owned());
+        let fast42 = Fast42::new("UID", &secret, 1400, 8);
         let client_id = "UID".to_string();
         let access_token = AccessToken {
             access_token: Secret::new("TOKEN".to_string()),
@@ -321,7 +364,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_access_token_cache_hit() {
-        let fast42 = Fast42::new("UID", "SECRET", 1400, 8);
+        let secret = SecretString::new("SECRET".to_owned());
+        let fast42 = Fast42::new("UID", &secret, 1400, 8);
         let client_id = "UID".to_string();
         let token = AccessToken {
             access_token: Secret::new("TOKEN".to_string()),
@@ -343,7 +387,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_access_token_cache_empty() {
-        let fast42 = Fast42::new("UID", "SECRET", 1400, 8);
+        let secret = SecretString::new("SECRET".to_owned());
+        let fast42 = Fast42::new("UID", &secret, 1400, 8);
         // Should mock fetch_access_token and store_access_token but for now I'm lazy
         let _m = mock("POST", "/oauth/token")
             .with_status(200)
@@ -364,15 +409,15 @@ mod tests {
 
     #[test]
     fn test_format_options_one() {
-        let options = format_options([HttpOptions::new("key", "value")]);
+        let options = format_options([HttpOption::new("key", "value")]);
         assert_eq!(options, "?key=value");
     }
 
     #[test]
     fn test_format_options_multiple() {
         let options = format_options([
-            HttpOptions::new("key", "value"),
-            HttpOptions::new("key2", "value2"),
+            HttpOption::new("key", "value"),
+            HttpOption::new("key2", "value2"),
         ]);
         assert_eq!(options, "?key=value&key2=value2");
     }

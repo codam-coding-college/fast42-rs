@@ -1,4 +1,4 @@
-use fast42::{HttpOptions, Fast42};
+use fast42::{HttpOption, Fast42};
 use config;
 use serde::Deserialize;
 use secrecy::{ExposeSecret, Secret};
@@ -12,6 +12,8 @@ pub struct Settings {
 pub struct FortyTwoAPICredentials {
     pub uid: String,
     pub secret: Secret<String>,
+    pub rate_hourly: u64,
+    pub rate_secondly: u64,
 }
 
 pub fn get_configuration_settings() -> Result<Settings, config::ConfigError> {
@@ -28,14 +30,14 @@ async fn main() {
     let credentials = get_configuration_settings().unwrap().fortytwo;
     let fast42 = Fast42::new(
         &credentials.uid,
-        &credentials.secret.expose_secret(),
-        14000,
-        8,
+        &credentials.secret,
+        credentials.rate_hourly,
+        credentials.rate_secondly,
     );
     let result = fast42
-        .get_all_async_pages(
+        .get_all_pages(
             "/users".to_string(),
-            vec![HttpOptions::new("filter[primary_campus_id]", "14")],
+            vec![HttpOption::new("filter[primary_campus_id]", "14")],
         )
         .await;
     match result {
