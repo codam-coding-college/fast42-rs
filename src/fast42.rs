@@ -16,6 +16,9 @@ use tower::limit::RateLimit;
 use tower::ServiceExt;
 use tower::{BoxError, Service, ServiceBuilder};
 
+#[cfg(test)]
+use mockito;
+
 type ClientId = String;
 
 struct ApiCredentials {
@@ -37,6 +40,8 @@ struct Fast42 {
     cache: Arc<Cache<ClientId, AccessToken>>,
     service: Buffer<RateLimit<RateLimit<Client>>, Request>,
     monitor: JoinHandle<()>,
+    root_url: String,
+    version: String,
 }
 
 #[derive(Clone)]
@@ -51,8 +56,6 @@ impl HttpOptions {
     }
 }
 
-const API_ROOT_URL: &str = "https://api.intra.42.fr/v2";
-
 impl Fast42 {
     pub fn new(
         key: &str,
@@ -60,6 +63,14 @@ impl Fast42 {
         ratelimit_per_hour: u64,
         ratelimit_per_second: u64,
     ) -> Fast42 {
+        #[cfg(not(test))]
+        let root_url: &str = "https://api.intra.42.fr";
+
+        #[cfg(test)]
+        let root_url: &str = &mockito::server_url();
+
+        let version = "v2";
+
         let client = Client::new();
 
         let service = ServiceBuilder::new()
@@ -82,6 +93,8 @@ impl Fast42 {
             cache,
             service,
             monitor,
+            root_url: root_url.to_string(),
+            version: version.to_string(),
         }
     }
 
@@ -205,6 +218,7 @@ impl Fast42 {
         pages
     }
 
+    // SLOW
     pub async fn get_all_sync_pages<D>(
         &self,
         endpoint: String,
@@ -273,7 +287,7 @@ impl Fast42 {
             Ok(at) => {
                 let token = at.access_token.expose_secret();
                 let req = client
-                    .request(method, format!("{}{}", API_ROOT_URL, endpoint))
+                    .request(method, format!("{}/{}{}", &self.root_url, &self.version, endpoint))
                     .header("Authorization", format!("Bearer {}", token))
                     .header("Content-Type", "application/json")
                     .build()?;
@@ -303,7 +317,7 @@ impl Fast42 {
             Ok(at) => {
                 let token = at.access_token.expose_secret();
                 let req = client
-                    .request(method, format!("{}{}", API_ROOT_URL, endpoint))
+                    .request(method, format!("{}/{}{}", &self.root_url, &self.version, endpoint))
                     .header("Authorization", format!("Bearer {}", token))
                     .header("Content-Type", "application/json")
                     .body(body)
@@ -325,7 +339,7 @@ impl Fast42 {
 
     async fn fetch_access_token(&self) -> Result<AccessToken, BoxError> {
         let client = Client::new();
-        let req = client.post("https://api.intra.42.fr/oauth/token")
+        let req = client.post(format!("{}/oauth/token", &self.root_url))
             .header("Content-Type", "application/x-www-form-urlencoded")
             .body(format!("grant_type=client_credentials&client_id={}&client_secret={}&scope=projects%20public", self.credentials.client_id, self.credentials.client_secret.expose_secret()))
             .build()?;
@@ -371,9 +385,106 @@ impl Drop for Fast42 {
 
 #[cfg(test)]
 mod tests {
+    use mockito::mock;
+    use secrecy::Secret;
+
     use crate::configuration::get_configuration_settings;
 
     use super::*;
+
+    #[tokio::test]
+    async fn test_new() {
+        let fast42 = Fast42::new(
+            "UID",
+            "SECRET",
+            1400,
+            8,
+        );
+        assert_eq!(fast42.credentials.client_id, "UID");
+        assert_eq!(fast42.credentials.client_secret.expose_secret(), "SECRET");
+        assert!(!fast42.root_url.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_fetch_access_token_ok() {
+        let fast42 = Fast42::new(
+            "UID",
+            "SECRET",
+            1400,
+            8,
+        );
+        let _m = mock("POST", "/oauth/token")
+            .with_status(200)
+            .with_header("content-type", "application/json; charset=utf-8")
+            .with_body(r#"{"access_token":"TOKEN","token_type":"bearer","expires_in":7200,"scope":"public","created_at":1}"#)
+            .create();
+        let access_token = fast42.fetch_access_token().await;
+        assert!(access_token.is_ok());
+        let access_token = access_token.unwrap();
+        assert_eq!(access_token.access_token.expose_secret(), "TOKEN");
+        assert_eq!(access_token.token_type, "bearer");
+        assert_eq!(access_token.expires_in, 7200);
+        assert_eq!(access_token.scope, "public");
+        assert_eq!(access_token.created_at, 1);
+    }
+
+    #[tokio::test]
+    async fn test_store_access_token_ok() {
+        let fast42 = Fast42::new(
+            "UID",
+            "SECRET",
+            1400,
+            8,
+        );
+        let client_id = "UID".to_string();
+        let access_token = AccessToken { access_token: Secret::new("TOKEN".to_string()), token_type: "bearer".to_string(), expires_in: 7200, scope: "public".to_string(), created_at: 1 };
+        fast42.store_access_token(client_id.clone(), access_token).await;
+        let token = fast42.cache.get(&client_id).await;
+        assert!(token.is_some());
+        let token = token.unwrap();
+        assert_eq!(token.access_token.expose_secret(), "TOKEN");
+    }
+
+    #[tokio::test]
+    async fn test_get_access_token_cache_hit() {
+        let fast42 = Fast42::new(
+            "UID",
+            "SECRET",
+            1400,
+            8,
+        );
+        let client_id = "UID".to_string();
+        let token = AccessToken { access_token: Secret::new("TOKEN".to_string()), token_type: "bearer".to_string(), expires_in: 7200, scope: "public".to_string(), created_at: 1 };
+        let expiry = &token.expires_in.clone() - 10;
+        fast42.cache
+            .insert(client_id, token, Duration::from_secs(expiry - 10))
+            .await;
+        let access_token = fast42.get_access_token().await;
+        assert!(access_token.is_ok());
+        let access_token = access_token.unwrap();
+        assert_eq!(access_token.access_token.expose_secret(), "TOKEN");
+    }
+
+    #[tokio::test]
+    async fn test_get_access_token_cache_empty() {
+        let fast42 = Fast42::new(
+            "UID",
+            "SECRET",
+            1400,
+            8,
+        );
+        // Should mock fetch_access_token and store_access_token but for now I'm lazy
+        let _m = mock("POST", "/oauth/token")
+            .with_status(200)
+            .with_header("content-type", "application/json; charset=utf-8")
+            .with_body(r#"{"access_token":"TOKEN","token_type":"bearer","expires_in":7200,"scope":"public","created_at":1}"#)
+            .create();
+        let access_token = fast42.get_access_token().await;
+        assert!(access_token.is_ok());
+        let access_token = access_token.unwrap();
+        assert_eq!(access_token.access_token.expose_secret(), "TOKEN");
+    }
+
 
     #[tokio::test]
     async fn it_works() {
