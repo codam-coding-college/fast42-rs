@@ -23,7 +23,7 @@
     variant_size_differences
 )]
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt;
 use std::future::Future;
@@ -34,7 +34,7 @@ use tracing::{error, info, instrument, trace};
 
 use futures::future::try_join_all;
 pub use reqwest::Response;
-use reqwest::{Body, Client, Method, Request};
+use reqwest::{Client, Method, Request};
 use retainer::entry::CacheReadGuard;
 use retainer::Cache;
 use secrecy::{ExposeSecret, SecretString};
@@ -240,6 +240,7 @@ impl Fast42 {
     ///     }
     /// }
     /// ```
+    #[instrument]
     pub async fn get<D>(&self, endpoint: &str, options: D) -> Result<Response, BoxError>
     where
         D: IntoIterator<Item = HttpOption> + std::fmt::Debug,
@@ -248,6 +249,183 @@ impl Fast42 {
         let endpoint = format!("{}{}", endpoint, http_options);
         info!("Getting {}", endpoint);
         let res = self.make_api_req(Method::GET, endpoint.clone(), "").await;
+        match res {
+            Ok(res) => {
+                trace!("request succeeded");
+                Ok(res)
+            }
+            Err(e) => {
+                error!("failed making request: {}", e);
+                Err(e)
+            }
+        }
+    }
+
+    /// Makes a single POST request to the 42 API.
+    ///
+    /// Endpoint needs to be a String, starting with a `/` like: `/users`.
+    /// Options are the HTTP options. It takes any `IntoIterator` over `HttpOption` items. like: `[HttpOption::new("key", "value")]` or `vec![HttpOption::new("key", "value")]`.
+    /// Json is anything that can be serialized into JSON (using serde).
+    ///
+    /// ## Example
+    /// ```
+    /// use fast42::{Fast42, Response, BoxError};
+    /// use secrecy::SecretString;
+    /// use std::collections::HashMap;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let secret = SecretString::new("SECRET".to_owned());
+    ///     let fast42 = Fast42::new("UID", &secret, 1400, 8);
+    ///
+    ///     let mut json_body = HashMap::new();
+    ///     json_body.insert("id", 1);
+    ///     let response: Result<Response, BoxError> = fast42.post("/users", [], json_body).await;
+    ///     let response: Result<Response, BoxError> = fast42.post("/users", [], r#"{"id": 1}"#).await;
+    /// }
+    /// ```
+    #[instrument]
+    pub async fn post<D, T>(&self, endpoint: &str, options: D, json: T) -> Result<Response, BoxError>
+    where
+        D: IntoIterator<Item = HttpOption> + std::fmt::Debug,
+        T: Serialize + std::fmt::Debug,
+    {
+        let http_options = format_options(options);
+        let endpoint = format!("{}{}", endpoint, http_options);
+        info!("Getting {}", endpoint);
+        let res = self.make_api_req(Method::POST, endpoint.clone(), json).await;
+        match res {
+            Ok(res) => {
+                trace!("request succeeded");
+                Ok(res)
+            }
+            Err(e) => {
+                error!("failed making request: {}", e);
+                Err(e)
+            }
+        }
+    }
+
+    /// Makes a single PUT request to the 42 API.
+    ///
+    /// Endpoint needs to be a String, starting with a `/` like: `/users`.
+    /// Options are the HTTP options. It takes any `IntoIterator` over `HttpOption` items. like: `[HttpOption::new("key", "value")]` or `vec![HttpOption::new("key", "value")]`.
+    /// Json is anything that can be serialized into JSON (using serde).
+    ///
+    /// ## Example
+    /// ```
+    /// use fast42::{Fast42, Response, BoxError};
+    /// use secrecy::SecretString;
+    /// use std::collections::HashMap;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let secret = SecretString::new("SECRET".to_owned());
+    ///     let fast42 = Fast42::new("UID", &secret, 1400, 8);
+    ///
+    ///     let mut json_body = HashMap::new();
+    ///     json_body.insert("id", 1);
+    ///     let response: Result<Response, BoxError> = fast42.put("/users", [], json_body).await;
+    ///     let response: Result<Response, BoxError> = fast42.put("/users", [], r#"{"id": 1}"#).await;
+    /// }
+    /// ```
+    #[instrument]
+    pub async fn put<D, T>(&self, endpoint: &str, options: D, json: T) -> Result<Response, BoxError>
+    where
+        D: IntoIterator<Item = HttpOption> + std::fmt::Debug,
+        T: Serialize + std::fmt::Debug,
+    {
+        let http_options = format_options(options);
+        let endpoint = format!("{}{}", endpoint, http_options);
+        info!("Getting {}", endpoint);
+        let res = self.make_api_req(Method::PUT, endpoint.clone(), json).await;
+        match res {
+            Ok(res) => {
+                trace!("request succeeded");
+                Ok(res)
+            }
+            Err(e) => {
+                error!("failed making request: {}", e);
+                Err(e)
+            }
+        }
+    }
+
+    /// Makes a single PATCH request to the 42 API.
+    ///
+    /// Endpoint needs to be a String, starting with a `/` like: `/users`.
+    /// Options are the HTTP options. It takes any `IntoIterator` over `HttpOption` items. like: `[HttpOption::new("key", "value")]` or `vec![HttpOption::new("key", "value")]`.
+    /// Json is anything that can be serialized into JSON (using serde).
+    ///
+    /// ## Example
+    /// ```
+    /// use fast42::{Fast42, Response, BoxError};
+    /// use secrecy::SecretString;
+    /// use std::collections::HashMap;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let secret = SecretString::new("SECRET".to_owned());
+    ///     let fast42 = Fast42::new("UID", &secret, 1400, 8);
+    ///
+    ///     let mut json_body = HashMap::new();
+    ///     json_body.insert("id", "1");
+    ///     json_body.insert("name", "fast42");
+    ///     let response: Result<Response, BoxError> = fast42.patch("/users", [], json_body).await;
+    ///     let response: Result<Response, BoxError> = fast42.patch("/users", [], r#"{"id": "1", "name": "fast42"}"#).await;
+    /// }
+    /// ```
+    #[instrument]
+    pub async fn patch<D, T>(&self, endpoint: &str, options: D, json: T) -> Result<Response, BoxError>
+    where
+        D: IntoIterator<Item = HttpOption> + std::fmt::Debug,
+        T: Serialize + std::fmt::Debug,
+    {
+        let http_options = format_options(options);
+        let endpoint = format!("{}{}", endpoint, http_options);
+        info!("Getting {}", endpoint);
+        let res = self.make_api_req(Method::PATCH, endpoint.clone(), json).await;
+        match res {
+            Ok(res) => {
+                trace!("request succeeded");
+                Ok(res)
+            }
+            Err(e) => {
+                error!("failed making request: {}", e);
+                Err(e)
+            }
+        }
+    }
+
+    /// Makes a single DELETE request to the 42 API.
+    ///
+    /// Endpoint needs to be a String, starting with a `/` like: `/users`.
+    /// Options are the HTTP options. It takes any `IntoIterator` over `HttpOption` items. like: `[HttpOption::new("key", "value")]` or `vec![HttpOption::new("key", "value")]`.
+    /// Json is anything that can be serialized into JSON (using serde).
+    ///
+    /// ## Example
+    /// ```
+    /// use fast42::{Fast42, HttpOption, Response, BoxError};
+    /// use secrecy::SecretString;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let secret = SecretString::new("SECRET".to_owned());
+    ///     let fast42 = Fast42::new("UID", &secret, 1400, 8);
+    ///
+    ///     let response: Result<Response, BoxError> = fast42.delete("/users", [HttpOption::new("id", "1")], "").await;
+    /// }
+    /// ```
+    #[instrument]
+    pub async fn delete<D, T>(&self, endpoint: &str, options: D, json: T) -> Result<Response, BoxError>
+    where
+        D: IntoIterator<Item = HttpOption> + std::fmt::Debug,
+        T: Serialize + std::fmt::Debug,
+    {
+        let http_options = format_options(options);
+        let endpoint = format!("{}{}", endpoint, http_options);
+        info!("Getting {}", endpoint);
+        let res = self.make_api_req(Method::DELETE, endpoint.clone(), json).await;
         match res {
             Ok(res) => {
                 trace!("request succeeded");
@@ -343,11 +521,11 @@ impl Fast42 {
         pages
     }
 
-    async fn make_api_req<T: Into<Body>>(
+    async fn make_api_req<T: Serialize>(
         &self,
         method: Method,
         endpoint: String,
-        body: T,
+        json: T,
     ) -> Result<Response, BoxError> {
         let client = Client::new();
         let access_token = self.get_access_token().await;
@@ -362,7 +540,7 @@ impl Fast42 {
                     )
                     .header("Authorization", format!("Bearer {}", token))
                     .header("Content-Type", "application/json")
-                    .body(body)
+                    .json(&json)
                     .build()?;
                 let res = self
                     .service
@@ -429,6 +607,7 @@ impl Drop for Fast42 {
 #[cfg(test)]
 mod tests {
     use mockito::mock;
+    use reqwest::StatusCode;
     use secrecy::Secret;
 
     use super::*;
@@ -497,10 +676,97 @@ mod tests {
         struct User {
             id: u64,
         }
-        dbg!(&res);
         assert_eq!(res.pop().unwrap().json::<User>().await.unwrap().id, 3);
         assert_eq!(res.pop().unwrap().json::<User>().await.unwrap().id, 2);
         assert_eq!(res.pop().unwrap().json::<User>().await.unwrap().id, 1);
+    }
+
+    #[tokio::test]
+    async fn test_post() {
+        let secret = SecretString::new("SECRET".to_owned());
+        let fast42 = Fast42::new("UID", &secret, 1400, 8);
+        let _m = mock("POST", "/v2/users")
+            .with_status(200)
+            .with_header("content-type", "application/json; charset=utf-8")
+            .with_body(r#"{"id":1}"#)
+            .create();
+        let _m = mock("POST", "/oauth/token")
+            .with_status(200)
+            .with_header("content-type", "application/json; charset=utf-8")
+            .with_body(r#"{"access_token":"TOKEN","token_type":"bearer","expires_in":7200,"scope":"public","created_at":1}"#)
+            .create();
+        let res = fast42.post("/users", [], r#"{"id": 1}"#).await.unwrap();
+        #[derive(Deserialize)]
+        struct User {
+            id: u64,
+        }
+        let json: User = res.json().await.unwrap();
+        assert_eq!(json.id, 1);
+    }
+
+    #[tokio::test]
+    async fn test_put() {
+        let secret = SecretString::new("SECRET".to_owned());
+        let fast42 = Fast42::new("UID", &secret, 1400, 8);
+        let _m = mock("PUT", "/v2/users")
+            .with_status(200)
+            .with_header("content-type", "application/json; charset=utf-8")
+            .with_body(r#"{"id":1}"#)
+            .create();
+        let _m = mock("POST", "/oauth/token")
+            .with_status(200)
+            .with_header("content-type", "application/json; charset=utf-8")
+            .with_body(r#"{"access_token":"TOKEN","token_type":"bearer","expires_in":7200,"scope":"public","created_at":1}"#)
+            .create();
+        let res = fast42.put("/users", [], r#"{"id": 1}"#).await.unwrap();
+        #[derive(Deserialize)]
+        struct User {
+            id: u64,
+        }
+        let json: User = res.json().await.unwrap();
+        assert_eq!(json.id, 1);
+    }
+
+    #[tokio::test]
+    async fn test_patch() {
+        let secret = SecretString::new("SECRET".to_owned());
+        let fast42 = Fast42::new("UID", &secret, 1400, 8);
+        let _m = mock("PATCH", "/v2/users")
+            .with_status(200)
+            .with_header("content-type", "application/json; charset=utf-8")
+            .with_body(r#"{"id": 1, "name": "fast42"}"#)
+            .create();
+        let _m = mock("POST", "/oauth/token")
+            .with_status(200)
+            .with_header("content-type", "application/json; charset=utf-8")
+            .with_body(r#"{"access_token":"TOKEN","token_type":"bearer","expires_in":7200,"scope":"public","created_at":1}"#)
+            .create();
+        let res = fast42.patch("/users", [], r#"{"id": 1, "name": "fast42"}"#).await.unwrap();
+        #[derive(Deserialize)]
+        struct User {
+            id: u64,
+            name: String,
+        }
+        let json: User = res.json().await.unwrap();
+        assert_eq!(json.id, 1);
+        assert_eq!(json.name, "fast42");
+    }
+
+    #[tokio::test]
+    async fn test_delete() {
+        let secret = SecretString::new("SECRET".to_owned());
+        let fast42 = Fast42::new("UID", &secret, 1400, 8);
+        let _m = mock("DELETE", "/v2/users?id=1")
+            .with_status(204)
+            .create();
+        let _m = mock("POST", "/oauth/token")
+            .with_status(200)
+            .with_header("content-type", "application/json; charset=utf-8")
+            .with_body(r#"{"access_token":"TOKEN","token_type":"bearer","expires_in":7200,"scope":"public","created_at":1}"#)
+            .create();
+        let res = fast42.delete("/users", [HttpOption::new("id", "1")], "").await.unwrap();
+        let status = res.status();
+        assert_eq!(status, StatusCode::NO_CONTENT)
     }
 
     #[tokio::test]

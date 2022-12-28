@@ -13,9 +13,9 @@ Main features:
 
 # TODO
 
-- [] add tests for get() and get_all_pages()
-- [] add patch/put/post/delete
+- [X] add patch/put/post/delete
 - [] add scopes
 - [] add multi key support
+- [] implement doing requests with user access token
 - [] solve potential issues with duplicate http options (`page[size]`)
-- [] publish
+- [] publish to crates.io
