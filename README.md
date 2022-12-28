@@ -1,11 +1,21 @@
 # Fast42 - Rust Edition
-For dev:
-- Initialize your `secrets.yaml` file in the root of the repo using the template from `secrets_example.yaml`
-- Make sure your API keys have the `Certified App` role OR change the rate limits in the tests accordingly
-- You should now be able to run the tests against the 42API
+A super fast 42 API connector
+
+Makes it easy to fetch data from the 42 API.
+Main features:
+- Rate Limited
+- Async (easily fetch all pages of an endpoint!)
+- Fast 🚀
+
+## Running examples
+- Initialize your `secrets.yaml` file in the `examples` folder using the template from `secrets_example.yaml`
+- Run the example like this: `cargo run --example users`
 
 # TODO
 
+- [] add tests for get() and get_all_pages()
 - [] add patch/put/post/delete
 - [] add scopes
 - [] add multi key support
+- [] solve potential issues with duplicate http options (`page[size]`)
+- [] publish

@@ -8,22 +8,22 @@
 
 
 #![forbid(unsafe_code)]
-// #![ warn
-// (
-//    anonymous_parameters          ,
-//    missing_copy_implementations  ,
-//    missing_debug_implementations ,
-//    missing_docs                  ,
-//    nonstandard_style             ,
-//    rust_2018_idioms              ,
-//    single_use_lifetimes          ,
-//    trivial_casts                 ,
-//    trivial_numeric_casts         ,
-//    unreachable_pub               ,
-//    unused_extern_crates          ,
-//    unused_qualifications         ,
-//    variant_size_differences      ,
-// )]
+#![ warn
+(
+   anonymous_parameters          ,
+   missing_copy_implementations  ,
+   missing_debug_implementations ,
+   missing_docs                  ,
+   nonstandard_style             ,
+   rust_2018_idioms              ,
+   single_use_lifetimes          ,
+   trivial_casts                 ,
+   trivial_numeric_casts         ,
+   unreachable_pub               ,
+   unused_extern_crates          ,
+   unused_qualifications         ,
+   variant_size_differences      ,
+)]
 
 use serde::Deserialize;
 use std::error::Error;
@@ -35,7 +35,8 @@ use std::time::Duration;
 use tracing::{instrument, info, trace, error};
 
 use futures::future::try_join_all;
-use reqwest::{Body, Client, Method, Request, Response};
+use reqwest::{Body, Client, Method, Request};
+pub use reqwest::Response;
 use retainer::entry::CacheReadGuard;
 use retainer::Cache;
 use secrecy::{ExposeSecret, SecretString};
@@ -43,7 +44,8 @@ use tokio::task::JoinHandle;
 use tower::buffer::Buffer;
 use tower::limit::RateLimit;
 use tower::ServiceExt;
-use tower::{BoxError, Service, ServiceBuilder};
+use tower::{Service, ServiceBuilder};
+pub use tower::BoxError;
 
 #[cfg(test)]
 use mockito;
@@ -141,6 +143,13 @@ pub struct HttpOption {
 }
 
 impl HttpOption {
+
+    /// Creates a new HttpOption.
+    /// 
+    /// ## Example
+    /// ```
+    /// # use fast42::HttpOption;
+    /// let option = HttpOption::new("key", "value");
     pub fn new<T>(key: T, value: T) -> Self
     where
         T: Into<String>,
@@ -210,7 +219,33 @@ impl Fast42 {
         }
     }
 
-    pub async fn get<D>(&self, endpoint: String, options: D) -> Result<Response, BoxError>
+    /// Makes a single get request to the 42 API.
+    /// 
+    /// Endpoint need to be a String, starting with a `/` like: `/users`.
+    /// Options are the HTTP options. It takes any `IntoIterator` over `HttpOption` items. like: `[HttpOption::new("key", "value")]` or `vec![HttpOption::new("key", "value")]`.
+    /// 
+    /// ## Example
+    /// ```
+    /// use fast42::{Fast42, HttpOption, Response, BoxError};
+    /// use secrecy::SecretString;
+    /// 
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let secret = SecretString::new("SECRET".to_owned());
+    ///     let fast42 = Fast42::new("UID", &secret, 1400, 8);
+    /// 
+    ///     let response: Result<Response, BoxError> = fast42.get("/users", [HttpOption::new("campus_id", "14")]).await;
+    ///     match response {
+    ///         Ok(res) => {
+    ///             print!("{}", res.text().await.unwrap())
+    ///         },
+    ///         Err(e) => {
+    ///             println!("{}", e)
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    pub async fn get<D>(&self, endpoint: &str, options: D) -> Result<Response, BoxError>
     where
         D: IntoIterator<Item = HttpOption> + std::fmt::Debug,
     {
@@ -230,9 +265,35 @@ impl Fast42 {
         }
     }
 
+    /// Gets all the pages of an endpoint of the 42 API.
+    /// This function first awaits the request of the first page to find the total number of pages. Then it fetches the other pages async.
+    /// If all goes well you'll get a `Vec<Response>`. If any of the pages fail, you get an Error.
+    /// 
+    /// ## Example
+    /// ```
+    /// use fast42::{Fast42, HttpOption, Response, BoxError};
+    /// use secrecy::SecretString;
+    /// 
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let secret = SecretString::new("SECRET".to_owned());
+    ///     let fast42 = Fast42::new("UID", &secret, 1400, 8);
+    /// 
+    ///     let response: Result<Vec<Response>, BoxError> = fast42.get_all_pages("/users", [HttpOption::new("campus_id", "14")]).await;
+    ///     match response {
+    ///         Ok(res) => {
+    ///             let page_count = res.len();
+    ///             print!("Fetched {} pages", page_count)
+    ///         },
+    ///         Err(e) => {
+    ///             println!("{}", e)
+    ///         }
+    ///     }
+    /// }
+    /// ```
     pub async fn get_all_pages<D>(
         &self,
-        endpoint: String,
+        endpoint: &str,
         options: D,
     ) -> Result<Vec<Response>, BoxError>
     where

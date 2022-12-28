@@ -1,7 +1,7 @@
 use fast42::{HttpOption, Fast42};
 use config;
 use serde::Deserialize;
-use secrecy::{ExposeSecret, Secret};
+use secrecy::Secret;
 
 #[derive(Deserialize)]
 pub struct Settings {
@@ -36,7 +36,7 @@ async fn main() {
     );
     let result = fast42
         .get_all_pages(
-            "/users".to_string(),
+            "/users",
             vec![HttpOption::new("filter[primary_campus_id]", "14")],
         )
         .await;
