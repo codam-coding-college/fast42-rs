@@ -1,28 +1,26 @@
 //! A super fast 42 API connector
-//! 
+//!
 //! Makes it easy to fetch data from the 42 API.
 //! Main features:
 //! - Rate Limited
 //! - Async (easily fetch all pages of an endpoint!)
 //! - Fast 🚀
 
-
 #![forbid(unsafe_code)]
-#![ warn
-(
-   anonymous_parameters          ,
-   missing_copy_implementations  ,
-   missing_debug_implementations ,
-   missing_docs                  ,
-   nonstandard_style             ,
-   rust_2018_idioms              ,
-   single_use_lifetimes          ,
-   trivial_casts                 ,
-   trivial_numeric_casts         ,
-   unreachable_pub               ,
-   unused_extern_crates          ,
-   unused_qualifications         ,
-   variant_size_differences      ,
+#![warn(
+    anonymous_parameters,
+    missing_copy_implementations,
+    missing_debug_implementations,
+    missing_docs,
+    nonstandard_style,
+    rust_2018_idioms,
+    single_use_lifetimes,
+    trivial_casts,
+    trivial_numeric_casts,
+    unreachable_pub,
+    unused_extern_crates,
+    unused_qualifications,
+    variant_size_differences
 )]
 
 use serde::Deserialize;
@@ -32,20 +30,20 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{instrument, info, trace, error};
+use tracing::{error, info, instrument, trace};
 
 use futures::future::try_join_all;
-use reqwest::{Body, Client, Method, Request};
 pub use reqwest::Response;
+use reqwest::{Body, Client, Method, Request};
 use retainer::entry::CacheReadGuard;
 use retainer::Cache;
 use secrecy::{ExposeSecret, SecretString};
 use tokio::task::JoinHandle;
 use tower::buffer::Buffer;
 use tower::limit::RateLimit;
+pub use tower::BoxError;
 use tower::ServiceExt;
 use tower::{Service, ServiceBuilder};
-pub use tower::BoxError;
 
 #[cfg(test)]
 use mockito;
@@ -75,7 +73,7 @@ struct AccessToken {
 }
 
 /// Struct holding everything needed to perform requests. Can only be instantiated using the `new()` method.
-/// 
+///
 /// # Example
 /// ```
 /// # use fast42::Fast42;
@@ -124,9 +122,8 @@ where
         .collect::<String>()
 }
 
-
 /// Key/value pair holder to represent HTTP options. Best constructed using the `new()` method.
-/// 
+///
 /// ## Example
 /// ```
 /// # use fast42::HttpOption;
@@ -143,9 +140,8 @@ pub struct HttpOption {
 }
 
 impl HttpOption {
-
     /// Creates a new HttpOption.
-    /// 
+    ///
     /// ## Example
     /// ```
     /// # use fast42::HttpOption;
@@ -162,9 +158,8 @@ impl HttpOption {
 }
 
 impl Fast42 {
-
     /// Constructor of the Fast42 struct.
-    /// 
+    ///
     /// # Example
     /// ```
     /// # use fast42::Fast42;
@@ -220,20 +215,20 @@ impl Fast42 {
     }
 
     /// Makes a single get request to the 42 API.
-    /// 
+    ///
     /// Endpoint need to be a String, starting with a `/` like: `/users`.
     /// Options are the HTTP options. It takes any `IntoIterator` over `HttpOption` items. like: `[HttpOption::new("key", "value")]` or `vec![HttpOption::new("key", "value")]`.
-    /// 
+    ///
     /// ## Example
     /// ```
     /// use fast42::{Fast42, HttpOption, Response, BoxError};
     /// use secrecy::SecretString;
-    /// 
+    ///
     /// #[tokio::main]
     /// async fn main() {
     ///     let secret = SecretString::new("SECRET".to_owned());
     ///     let fast42 = Fast42::new("UID", &secret, 1400, 8);
-    /// 
+    ///
     ///     let response: Result<Response, BoxError> = fast42.get("/users", [HttpOption::new("campus_id", "14")]).await;
     ///     match response {
     ///         Ok(res) => {
@@ -257,28 +252,28 @@ impl Fast42 {
             Ok(res) => {
                 trace!("request succeeded");
                 Ok(res)
-            },
+            }
             Err(e) => {
                 error!("failed making request: {}", e);
                 Err(e)
-            },
+            }
         }
     }
 
     /// Gets all the pages of an endpoint of the 42 API.
     /// This function first awaits the request of the first page to find the total number of pages. Then it fetches the other pages async.
     /// If all goes well you'll get a `Vec<Response>`. If any of the pages fail, you get an Error.
-    /// 
+    ///
     /// ## Example
     /// ```
     /// use fast42::{Fast42, HttpOption, Response, BoxError};
     /// use secrecy::SecretString;
-    /// 
+    ///
     /// #[tokio::main]
     /// async fn main() {
     ///     let secret = SecretString::new("SECRET".to_owned());
     ///     let fast42 = Fast42::new("UID", &secret, 1400, 8);
-    /// 
+    ///
     ///     let response: Result<Vec<Response>, BoxError> = fast42.get_all_pages("/users", [HttpOption::new("campus_id", "14")]).await;
     ///     match response {
     ///         Ok(res) => {
@@ -381,7 +376,7 @@ impl Fast42 {
             Err(e) => {
                 error!("failed to get access token");
                 Err(e)
-            },
+            }
         }
     }
 
