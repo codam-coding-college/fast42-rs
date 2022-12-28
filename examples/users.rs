@@ -14,6 +14,7 @@ pub struct FortyTwoAPICredentials {
     pub secret: Secret<String>,
     pub rate_hourly: u64,
     pub rate_secondly: u64,
+    pub scope: String,
 }
 
 pub fn get_configuration_settings() -> Result<Settings, config::ConfigError> {
@@ -33,6 +34,7 @@ async fn main() {
         &credentials.secret,
         credentials.rate_hourly,
         credentials.rate_secondly,
+        &credentials.scope
     );
     let result = fast42
         .get_all_pages(

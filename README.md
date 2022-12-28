@@ -13,9 +13,9 @@ Main features:
 
 # TODO
 
-- [X] add patch/put/post/delete
-- [] add scopes
+- [x] add patch/put/post/delete
+- [x] add scopes
 - [] add multi key support
 - [] implement doing requests with user access token
-- [] solve potential issues with duplicate http options (`page[size]`)
+- [x] solve potential issues with duplicate http options (`page[size]`)
 - [] publish to crates.io

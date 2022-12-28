@@ -24,6 +24,7 @@
 )]
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 use std::future::Future;
@@ -58,6 +59,7 @@ type ClientId = String;
 struct ApiCredentials {
     client_id: ClientId,
     client_secret: SecretString,
+    scope: String,
 }
 
 /// Struct holding the response from the token endpoint.
@@ -82,7 +84,7 @@ struct AccessToken {
 /// # #[tokio::main]
 /// # async fn main() {
 /// let secret = SecretString::new("SECRET".to_owned());
-/// let fast42 = Fast42::new("UID", &secret, 1400, 8);
+/// let fast42 = Fast42::new("UID", &secret, 1400, 8, "public");
 /// # }
 /// ```
 #[non_exhaustive]
@@ -122,6 +124,44 @@ where
         .collect::<String>()
 }
 
+fn format_options_from_map<D>(options: D) -> String
+where
+    D: IntoIterator<Item = (String, String)>,
+{
+    options
+        .into_iter()
+        .enumerate()
+        .map(|(i, options)| {
+            if i == 0 {
+                format!("?{}={}", options.0, options.1)
+            } else {
+                format!("&{}={}", options.0, options.1)
+            }
+        })
+        .collect::<String>()
+}
+
+fn get_options_string_and_page_size<D>(options: D) -> (String, u32)
+where
+    D: IntoIterator<Item = HttpOption> + Clone + std::fmt::Debug,
+{
+    let mut page_size: u32 = 100;
+    let mut optionsmap: HashMap<String, String> = HashMap::new();
+    optionsmap.insert("page[size]".into(), "100".into());
+    for op in options {
+        optionsmap.insert(op.key, op.value);
+    }
+    if let Some(value) = optionsmap.get("page[size]") {
+        if let Ok(new_size) = value.parse() {
+            page_size = new_size
+        } else {
+            error!("Invalid Page Size HTTP option, ignoring.")
+        }
+    }
+    let http_options = format_options_from_map(optionsmap);
+    (http_options, page_size)
+}
+
 /// Key/value pair holder to represent HTTP options. Best constructed using the `new()` method.
 ///
 /// ## Example
@@ -158,7 +198,9 @@ impl HttpOption {
 }
 
 impl Fast42 {
-    /// Constructor of the Fast42 struct.
+    /// Constructs a new [Fast42].
+    ///
+    /// Note: scopes are `%20` separated. See example.
     ///
     /// # Example
     /// ```
@@ -168,7 +210,7 @@ impl Fast42 {
     /// # #[tokio::main]
     /// # async fn main() {
     /// let secret = SecretString::new("SECRET".to_owned());
-    /// let fast42 = Fast42::new("UID", &secret, 1400, 8);
+    /// let fast42 = Fast42::new("UID", &secret, 1400, 8, "public%20projects");
     /// # }
     /// ```
     #[instrument]
@@ -177,6 +219,7 @@ impl Fast42 {
         secret: &SecretString,
         ratelimit_per_hour: u64,
         ratelimit_per_second: u64,
+        scope: &str,
     ) -> Fast42 {
         trace!("Initializing struct Fast42");
         #[cfg(not(test))]
@@ -205,6 +248,7 @@ impl Fast42 {
             credentials: ApiCredentials {
                 client_id: key.into(),
                 client_secret: secret.to_owned(),
+                scope: scope.into(),
             },
             cache,
             service,
@@ -227,7 +271,7 @@ impl Fast42 {
     /// #[tokio::main]
     /// async fn main() {
     ///     let secret = SecretString::new("SECRET".to_owned());
-    ///     let fast42 = Fast42::new("UID", &secret, 1400, 8);
+    ///     let fast42 = Fast42::new("UID", &secret, 1400, 8, "public");
     ///
     ///     let response: Result<Response, BoxError> = fast42.get("/users", [HttpOption::new("campus_id", "14")]).await;
     ///     match response {
@@ -276,7 +320,7 @@ impl Fast42 {
     /// #[tokio::main]
     /// async fn main() {
     ///     let secret = SecretString::new("SECRET".to_owned());
-    ///     let fast42 = Fast42::new("UID", &secret, 1400, 8);
+    ///     let fast42 = Fast42::new("UID", &secret, 1400, 8, "public");
     ///
     ///     let mut json_body = HashMap::new();
     ///     json_body.insert("id", 1);
@@ -285,7 +329,12 @@ impl Fast42 {
     /// }
     /// ```
     #[instrument]
-    pub async fn post<D, T>(&self, endpoint: &str, options: D, json: T) -> Result<Response, BoxError>
+    pub async fn post<D, T>(
+        &self,
+        endpoint: &str,
+        options: D,
+        json: T,
+    ) -> Result<Response, BoxError>
     where
         D: IntoIterator<Item = HttpOption> + std::fmt::Debug,
         T: Serialize + std::fmt::Debug,
@@ -293,7 +342,9 @@ impl Fast42 {
         let http_options = format_options(options);
         let endpoint = format!("{}{}", endpoint, http_options);
         info!("Getting {}", endpoint);
-        let res = self.make_api_req(Method::POST, endpoint.clone(), json).await;
+        let res = self
+            .make_api_req(Method::POST, endpoint.clone(), json)
+            .await;
         match res {
             Ok(res) => {
                 trace!("request succeeded");
@@ -321,7 +372,7 @@ impl Fast42 {
     /// #[tokio::main]
     /// async fn main() {
     ///     let secret = SecretString::new("SECRET".to_owned());
-    ///     let fast42 = Fast42::new("UID", &secret, 1400, 8);
+    ///     let fast42 = Fast42::new("UID", &secret, 1400, 8, "public");
     ///
     ///     let mut json_body = HashMap::new();
     ///     json_body.insert("id", 1);
@@ -366,7 +417,7 @@ impl Fast42 {
     /// #[tokio::main]
     /// async fn main() {
     ///     let secret = SecretString::new("SECRET".to_owned());
-    ///     let fast42 = Fast42::new("UID", &secret, 1400, 8);
+    ///     let fast42 = Fast42::new("UID", &secret, 1400, 8, "public");
     ///
     ///     let mut json_body = HashMap::new();
     ///     json_body.insert("id", "1");
@@ -376,7 +427,12 @@ impl Fast42 {
     /// }
     /// ```
     #[instrument]
-    pub async fn patch<D, T>(&self, endpoint: &str, options: D, json: T) -> Result<Response, BoxError>
+    pub async fn patch<D, T>(
+        &self,
+        endpoint: &str,
+        options: D,
+        json: T,
+    ) -> Result<Response, BoxError>
     where
         D: IntoIterator<Item = HttpOption> + std::fmt::Debug,
         T: Serialize + std::fmt::Debug,
@@ -384,7 +440,9 @@ impl Fast42 {
         let http_options = format_options(options);
         let endpoint = format!("{}{}", endpoint, http_options);
         info!("Getting {}", endpoint);
-        let res = self.make_api_req(Method::PATCH, endpoint.clone(), json).await;
+        let res = self
+            .make_api_req(Method::PATCH, endpoint.clone(), json)
+            .await;
         match res {
             Ok(res) => {
                 trace!("request succeeded");
@@ -411,13 +469,18 @@ impl Fast42 {
     /// #[tokio::main]
     /// async fn main() {
     ///     let secret = SecretString::new("SECRET".to_owned());
-    ///     let fast42 = Fast42::new("UID", &secret, 1400, 8);
+    ///     let fast42 = Fast42::new("UID", &secret, 1400, 8, "public");
     ///
     ///     let response: Result<Response, BoxError> = fast42.delete("/users", [HttpOption::new("id", "1")], "").await;
     /// }
     /// ```
     #[instrument]
-    pub async fn delete<D, T>(&self, endpoint: &str, options: D, json: T) -> Result<Response, BoxError>
+    pub async fn delete<D, T>(
+        &self,
+        endpoint: &str,
+        options: D,
+        json: T,
+    ) -> Result<Response, BoxError>
     where
         D: IntoIterator<Item = HttpOption> + std::fmt::Debug,
         T: Serialize + std::fmt::Debug,
@@ -425,7 +488,9 @@ impl Fast42 {
         let http_options = format_options(options);
         let endpoint = format!("{}{}", endpoint, http_options);
         info!("Getting {}", endpoint);
-        let res = self.make_api_req(Method::DELETE, endpoint.clone(), json).await;
+        let res = self
+            .make_api_req(Method::DELETE, endpoint.clone(), json)
+            .await;
         match res {
             Ok(res) => {
                 trace!("request succeeded");
@@ -450,7 +515,7 @@ impl Fast42 {
     /// #[tokio::main]
     /// async fn main() {
     ///     let secret = SecretString::new("SECRET".to_owned());
-    ///     let fast42 = Fast42::new("UID", &secret, 1400, 8);
+    ///     let fast42 = Fast42::new("UID", &secret, 1400, 8, "public");
     ///
     ///     let response: Result<Vec<Response>, BoxError> = fast42.get_all_pages("/users", [HttpOption::new("campus_id", "14")]).await;
     ///     match response {
@@ -472,46 +537,25 @@ impl Fast42 {
     where
         D: IntoIterator<Item = HttpOption> + Clone + std::fmt::Debug,
     {
-        let page: u32 = 1;
-        let page_options = vec![
-            HttpOption::new("page[size]".to_string(), "100".to_string()),
-            HttpOption::new("page[number]".to_string(), page.to_string()),
-        ];
-        let mut param_options = options.clone().into_iter();
-        let all_options = page_options
-            .into_iter()
-            .chain(&mut param_options)
-            .collect::<Vec<HttpOption>>()
-            .into_iter();
-        let http_options = format_options(all_options);
-        let query = format!("{}{}", endpoint, http_options);
-        trace!("GET page {}", page);
+        let page_number: u32 = 1;
+        let (options_string, page_size) = get_options_string_and_page_size(options);
+        let query = format!("{}{}&page[number]={}", endpoint, &options_string, page_number);
+        trace!("GET page {}", page_number);
         let res = self.make_api_req(Method::GET, query, "").await?;
         let headers = res.headers();
-        let total_pages = headers.get("x-total").unwrap().to_str()?.parse::<u32>()? / 100;
+        let total_pages = headers.get("x-total").unwrap().to_str()?.parse::<u32>()? / page_size;
         info!("Getting {} pages in total for {}", total_pages, endpoint);
-        let all_pages = (page..=total_pages)
+        let all_pages = (page_number..=total_pages)
             .map(
-                |p| -> Pin<
+                |page_number| -> Pin<
                     Box<
                         dyn Future<
                             Output = Result<Response, Box<dyn Error + Send + Sync + 'static>>,
                         >,
                     >,
                 > {
-                    let page_options = vec![
-                        HttpOption::new("page[size]".to_string(), "100".to_string()),
-                        HttpOption::new("page[number]".to_string(), p.to_string()),
-                    ];
-                    let mut param_options = options.clone().into_iter();
-                    let all_options = page_options
-                        .into_iter()
-                        .chain(&mut param_options)
-                        .collect::<Vec<HttpOption>>()
-                        .into_iter();
-                    let http_options = format_options(all_options);
-                    let query = format!("{}{}", endpoint, http_options);
-                    trace!("GET page {}", p);
+                    let query = format!("{}{}&page[number]={}", endpoint, &options_string, page_number);
+                    trace!("GET page {}", page_number);
                     let res = self.make_api_req(Method::GET, query, "");
                     Box::pin(res)
                 },
@@ -560,9 +604,15 @@ impl Fast42 {
 
     async fn fetch_access_token(&self) -> Result<AccessToken, BoxError> {
         let client = Client::new();
-        let req = client.post(format!("{}/oauth/token", &self.root_url))
+        let req = client
+            .post(format!("{}/oauth/token", &self.root_url))
             .header("Content-Type", "application/x-www-form-urlencoded")
-            .body(format!("grant_type=client_credentials&client_id={}&client_secret={}&scope=projects%20public", self.credentials.client_id, self.credentials.client_secret.expose_secret()))
+            .body(format!(
+                "grant_type=client_credentials&client_id={}&client_secret={}&scope={}",
+                self.credentials.client_id,
+                self.credentials.client_secret.expose_secret(),
+                self.credentials.scope
+            ))
             .build()?;
         let res: AccessToken = self
             .service
@@ -615,7 +665,7 @@ mod tests {
     #[tokio::test]
     async fn test_new() {
         let secret = SecretString::new("SECRET".to_owned());
-        let fast42 = Fast42::new("UID", &secret, 1400, 8);
+        let fast42 = Fast42::new("UID", &secret, 1400, 8, "public");
         assert_eq!(fast42.credentials.client_id, "UID");
         assert_eq!(fast42.credentials.client_secret.expose_secret(), "SECRET");
         assert!(!fast42.root_url.is_empty());
@@ -624,7 +674,7 @@ mod tests {
     #[tokio::test]
     async fn test_get() {
         let secret = SecretString::new("SECRET".to_owned());
-        let fast42 = Fast42::new("UID", &secret, 1400, 8);
+        let fast42 = Fast42::new("UID", &secret, 1400, 8, "public");
         let _m = mock("GET", "/v2/users?id=1")
             .with_status(200)
             .with_header("content-type", "application/json; charset=utf-8")
@@ -635,7 +685,10 @@ mod tests {
             .with_header("content-type", "application/json; charset=utf-8")
             .with_body(r#"{"access_token":"TOKEN","token_type":"bearer","expires_in":7200,"scope":"public","created_at":1}"#)
             .create();
-        let res = fast42.get("/users", [HttpOption::new("id", "1")]).await.unwrap();
+        let res = fast42
+            .get("/users", [HttpOption::new("id", "1")])
+            .await
+            .unwrap();
         #[derive(Deserialize)]
         struct User {
             id: u64,
@@ -647,7 +700,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_all_pages() {
         let secret = SecretString::new("SECRET".to_owned());
-        let fast42 = Fast42::new("UID", &secret, 1400, 8);
+        let fast42 = Fast42::new("UID", &secret, 1400, 8, "public");
         let _m1 = mock("GET", "/v2/users?page[size]=100&page[number]=1")
             .with_status(200)
             .with_header("content-type", "application/json; charset=utf-8")
@@ -684,7 +737,7 @@ mod tests {
     #[tokio::test]
     async fn test_post() {
         let secret = SecretString::new("SECRET".to_owned());
-        let fast42 = Fast42::new("UID", &secret, 1400, 8);
+        let fast42 = Fast42::new("UID", &secret, 1400, 8, "public");
         let _m = mock("POST", "/v2/users")
             .with_status(200)
             .with_header("content-type", "application/json; charset=utf-8")
@@ -707,7 +760,7 @@ mod tests {
     #[tokio::test]
     async fn test_put() {
         let secret = SecretString::new("SECRET".to_owned());
-        let fast42 = Fast42::new("UID", &secret, 1400, 8);
+        let fast42 = Fast42::new("UID", &secret, 1400, 8, "public");
         let _m = mock("PUT", "/v2/users")
             .with_status(200)
             .with_header("content-type", "application/json; charset=utf-8")
@@ -730,7 +783,7 @@ mod tests {
     #[tokio::test]
     async fn test_patch() {
         let secret = SecretString::new("SECRET".to_owned());
-        let fast42 = Fast42::new("UID", &secret, 1400, 8);
+        let fast42 = Fast42::new("UID", &secret, 1400, 8, "public");
         let _m = mock("PATCH", "/v2/users")
             .with_status(200)
             .with_header("content-type", "application/json; charset=utf-8")
@@ -741,7 +794,10 @@ mod tests {
             .with_header("content-type", "application/json; charset=utf-8")
             .with_body(r#"{"access_token":"TOKEN","token_type":"bearer","expires_in":7200,"scope":"public","created_at":1}"#)
             .create();
-        let res = fast42.patch("/users", [], r#"{"id": 1, "name": "fast42"}"#).await.unwrap();
+        let res = fast42
+            .patch("/users", [], r#"{"id": 1, "name": "fast42"}"#)
+            .await
+            .unwrap();
         #[derive(Deserialize)]
         struct User {
             id: u64,
@@ -755,16 +811,17 @@ mod tests {
     #[tokio::test]
     async fn test_delete() {
         let secret = SecretString::new("SECRET".to_owned());
-        let fast42 = Fast42::new("UID", &secret, 1400, 8);
-        let _m = mock("DELETE", "/v2/users?id=1")
-            .with_status(204)
-            .create();
+        let fast42 = Fast42::new("UID", &secret, 1400, 8, "public");
+        let _m = mock("DELETE", "/v2/users?id=1").with_status(204).create();
         let _m = mock("POST", "/oauth/token")
             .with_status(200)
             .with_header("content-type", "application/json; charset=utf-8")
             .with_body(r#"{"access_token":"TOKEN","token_type":"bearer","expires_in":7200,"scope":"public","created_at":1}"#)
             .create();
-        let res = fast42.delete("/users", [HttpOption::new("id", "1")], "").await.unwrap();
+        let res = fast42
+            .delete("/users", [HttpOption::new("id", "1")], "")
+            .await
+            .unwrap();
         let status = res.status();
         assert_eq!(status, StatusCode::NO_CONTENT)
     }
@@ -772,7 +829,7 @@ mod tests {
     #[tokio::test]
     async fn test_fetch_access_token_ok() {
         let secret = SecretString::new("SECRET".to_owned());
-        let fast42 = Fast42::new("UID", &secret, 1400, 8);
+        let fast42 = Fast42::new("UID", &secret, 1400, 8, "public");
         let _m = mock("POST", "/oauth/token")
             .with_status(200)
             .with_header("content-type", "application/json; charset=utf-8")
@@ -791,7 +848,7 @@ mod tests {
     #[tokio::test]
     async fn test_store_access_token_ok() {
         let secret = SecretString::new("SECRET".to_owned());
-        let fast42 = Fast42::new("UID", &secret, 1400, 8);
+        let fast42 = Fast42::new("UID", &secret, 1400, 8, "public");
         let client_id = "UID".to_string();
         let access_token = AccessToken {
             access_token: Secret::new("TOKEN".to_string()),
@@ -812,7 +869,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_access_token_cache_hit() {
         let secret = SecretString::new("SECRET".to_owned());
-        let fast42 = Fast42::new("UID", &secret, 1400, 8);
+        let fast42 = Fast42::new("UID", &secret, 1400, 8, "public");
         let client_id = "UID".to_string();
         let token = AccessToken {
             access_token: Secret::new("TOKEN".to_string()),
@@ -835,7 +892,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_access_token_cache_empty() {
         let secret = SecretString::new("SECRET".to_owned());
-        let fast42 = Fast42::new("UID", &secret, 1400, 8);
+        let fast42 = Fast42::new("UID", &secret, 1400, 8, "public");
         // Should mock fetch_access_token and store_access_token but for now I'm lazy
         let _m = mock("POST", "/oauth/token")
             .with_status(200)
