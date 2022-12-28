@@ -306,9 +306,9 @@ impl Fast42 {
             .collect::<Vec<HttpOption>>()
             .into_iter();
         let http_options = format_options(all_options);
-        let endpoint = format!("{}{}", endpoint, http_options);
+        let query = format!("{}{}", endpoint, http_options);
         trace!("GET page {}", page);
-        let res = self.make_api_req(Method::GET, endpoint.clone(), "").await?;
+        let res = self.make_api_req(Method::GET, query, "").await?;
         let headers = res.headers();
         let total_pages = headers.get("x-total").unwrap().to_str()?.parse::<u32>()? / 100;
         info!("Getting {} pages in total for {}", total_pages, endpoint);
@@ -332,9 +332,9 @@ impl Fast42 {
                         .collect::<Vec<HttpOption>>()
                         .into_iter();
                     let http_options = format_options(all_options);
-                    let endpoint = format!("{}{}", endpoint, http_options);
+                    let query = format!("{}{}", endpoint, http_options);
                     trace!("GET page {}", p);
-                    let res = self.make_api_req(Method::GET, endpoint, "");
+                    let res = self.make_api_req(Method::GET, query, "");
                     Box::pin(res)
                 },
             )
@@ -440,6 +440,67 @@ mod tests {
         assert_eq!(fast42.credentials.client_id, "UID");
         assert_eq!(fast42.credentials.client_secret.expose_secret(), "SECRET");
         assert!(!fast42.root_url.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get() {
+        let secret = SecretString::new("SECRET".to_owned());
+        let fast42 = Fast42::new("UID", &secret, 1400, 8);
+        let _m = mock("GET", "/v2/users?id=1")
+            .with_status(200)
+            .with_header("content-type", "application/json; charset=utf-8")
+            .with_body(r#"{"id":1}"#)
+            .create();
+        let _m = mock("POST", "/oauth/token")
+            .with_status(200)
+            .with_header("content-type", "application/json; charset=utf-8")
+            .with_body(r#"{"access_token":"TOKEN","token_type":"bearer","expires_in":7200,"scope":"public","created_at":1}"#)
+            .create();
+        let res = fast42.get("/users", [HttpOption::new("id", "1")]).await.unwrap();
+        #[derive(Deserialize)]
+        struct User {
+            id: u64,
+        }
+        let json: User = res.json().await.unwrap();
+        assert_eq!(json.id, 1);
+    }
+
+    #[tokio::test]
+    async fn test_get_all_pages() {
+        let secret = SecretString::new("SECRET".to_owned());
+        let fast42 = Fast42::new("UID", &secret, 1400, 8);
+        let _m1 = mock("GET", "/v2/users?page[size]=100&page[number]=1")
+            .with_status(200)
+            .with_header("content-type", "application/json; charset=utf-8")
+            .with_header("x-total", "300")
+            .with_body(r#"{"id":1}"#)
+            .create();
+        let _m2 = mock("GET", "/v2/users?page[size]=100&page[number]=2")
+            .with_status(200)
+            .with_header("content-type", "application/json; charset=utf-8")
+            .with_header("x-total", "300")
+            .with_body(r#"{"id":2}"#)
+            .create();
+        let _m3 = mock("GET", "/v2/users?page[size]=100&page[number]=3")
+            .with_status(200)
+            .with_header("content-type", "application/json; charset=utf-8")
+            .with_header("x-total", "300")
+            .with_body(r#"{"id":3}"#)
+            .create();
+        let _m4 = mock("POST", "/oauth/token")
+            .with_status(200)
+            .with_header("content-type", "application/json; charset=utf-8")
+            .with_body(r#"{"access_token":"TOKEN","token_type":"bearer","expires_in":7200,"scope":"public","created_at":1}"#)
+            .create();
+        let mut res = fast42.get_all_pages("/users", []).await.unwrap();
+        #[derive(Deserialize)]
+        struct User {
+            id: u64,
+        }
+        dbg!(&res);
+        assert_eq!(res.pop().unwrap().json::<User>().await.unwrap().id, 3);
+        assert_eq!(res.pop().unwrap().json::<User>().await.unwrap().id, 2);
+        assert_eq!(res.pop().unwrap().json::<User>().await.unwrap().id, 1);
     }
 
     #[tokio::test]
