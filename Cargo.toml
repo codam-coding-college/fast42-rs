@@ -9,6 +9,15 @@ license = "MIT"
 keywords = ["42", "api", "rate-limit", "connector"]
 categories = ["api-bindings"]
 rust-version = "1.66.0"
+include = [
+    "**/*.rs",
+    "Cargo.lock",
+    "Cargo.toml",
+    "LICENSE.txt",
+    "README.md",
+    ".gitignore",
+    "examples/secrets_example.yaml"
+]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
