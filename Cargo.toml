@@ -9,16 +9,13 @@ license = "MIT"
 keywords = ["42", "api", "rate-limit", "connector"]
 categories = ["api-bindings"]
 rust-version = "1.66.0"
-exclude = [
-    ".idea"
-]
 include = [
     "**/*.rs",
     "Cargo.lock",
     "Cargo.toml",
     "LICENSE.txt",
     "README.md",
-    ".gitignore",
+    "./.gitignore",
     "examples/secrets_example.yaml"
 ]
 
