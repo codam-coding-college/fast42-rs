@@ -15,7 +15,7 @@ Main features:
 
 - [x] add patch/put/post/delete
 - [x] add scopes
-- [] add multi key support
-- [] implement doing requests with user access token
+- [ ] add multi key support
+- [ ] implement doing requests with user access token
 - [x] solve potential issues with duplicate http options (`page[size]`)
-- [] publish to crates.io
+- [ ] publish to crates.io
